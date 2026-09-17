@@ -160,6 +160,31 @@ export function acceptedPositions(prompt, lo = 0, hi = MAX_FRET) {
   return [...prompt.accept].flatMap(m => positionsOfPitch(m, { lo, hi }));
 }
 
+// What to draw when the answer is revealed, split in two.
+//
+//   solid  — THE answer to the question as asked. When the prompt named a
+//            string, this is restricted to that string: showing "G on the A
+//            string" as four rings across four strings answers a question
+//            nobody asked and buries the one that was.
+//   ghosts — the same note elsewhere in the window on other strings. Useful
+//            context ("that note is also here"), drawn dashed so it can never
+//            be mistaken for the answer.
+export function revealFor(prompt, lo = 0, hi = MAX_FRET) {
+  if (!prompt) return { solid: [], ghosts: [] };
+  const asked = prompt.s;                       // undefined for extremal/nearest
+  const solid = prompt.positions.filter(p =>
+    (asked === undefined || p.s === asked) && p.f >= lo && p.f <= hi);
+  const isSolid = (s, f) => solid.some(p => p.s === s && p.f === f);
+  // Match on pitch CLASS, not pitch: "the same note somewhere else" is what a
+  // player is looking for, and an octave up is still the same note.
+  const pcs = new Set([...prompt.accept].map(pcOf));
+  const ghosts = [];
+  for (let s = 0; s < 6; s++) for (let f = lo; f <= hi; f++) {
+    if (pcs.has(pcAt(s, f)) && !isSolid(s, f)) ghosts.push({ s, f });
+  }
+  return { solid, ghosts };
+}
+
 // The invariant that keeps us out of the Guitar Blast bug: a sequence drill must
 // never ask for the same pitch twice, or sounding it once clears both.
 export function sequenceIsUnambiguous(prompt) {

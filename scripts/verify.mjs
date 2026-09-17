@@ -14,7 +14,7 @@ import {
   pcAt, midiAt, nameOf, parseNote, allCards, cardId,
   positionsOf, positionsOfPitch, extremal, nearestFrom, windowAround, firstFretOf,
 } from '../src/theory.js';
-import { buildPrompt, judge, VERDICT, sequenceIsUnambiguous, PITCH_UNIQUE } from '../src/drills.js';
+import { buildPrompt, judge, VERDICT, sequenceIsUnambiguous, PITCH_UNIQUE, revealFor } from '../src/drills.js';
 import { STAGES, poolThrough } from '../src/ladder.js';
 import { detectPitch } from '../src/pitch.js';
 
@@ -323,6 +323,44 @@ check('every other drill kind is answerable wherever it is offered', () => {
     assertions++;
     if (!p || !p.accept.size) fail(`degree ${d} of ${SHARP_NAMES[key]} has no answer`);
   }
+});
+
+check('the reveal separates the answer from the same note elsewhere', () => {
+  // Solid = the answer to the question AS ASKED. When a string was named, a
+  // position on another string is never part of it — showing four rings across
+  // four strings answers a question nobody asked.
+  for (let s = 0; s < 6; s++) for (let pc = 0; pc < 12; pc++) {
+    const w = windowAround(s, pc, 6);
+    const p = buildPrompt({ kind: 'find', s, pc, window: w });
+    const { solid, ghosts } = revealFor(p, w.lo, w.hi);
+
+    assertions++;
+    if (!solid.length) fail(`no answer shown for ${SHARP_NAMES[pc]} on ${STRINGS[s]}`);
+    for (const q of solid) {
+      assertions++;
+      if (q.s !== s) fail(`solid ring on the ${STRINGS[q.s]} string, but the question asked for ${STRINGS[s]}`);
+      if (PC(OPEN[q.s] + q.f) !== pc) fail(`solid ring is not a ${SHARP_NAMES[pc]}`);
+      if (q.f < w.lo || q.f > w.hi) fail(`solid ring at fret ${q.f} is outside ${w.label}`);
+    }
+    // Ghosts: same NOTE, inside the window, never overlapping the answer.
+    for (const g of ghosts) {
+      assertions++;
+      if (PC(OPEN[g.s] + g.f) !== pc) fail(`ghost at ${STRINGS[g.s]}-${g.f} is not a ${SHARP_NAMES[pc]}`);
+      if (g.f < w.lo || g.f > w.hi) fail(`ghost at fret ${g.f} is outside ${w.label}`);
+      if (solid.some(q => q.s === g.s && q.f === g.f)) fail(`${STRINGS[g.s]}-${g.f} is drawn twice`);
+    }
+    // Together they must be every instance of that note in the window — no
+    // position silently dropped.
+    const want = [];
+    for (let t = 0; t < 6; t++) for (let f = w.lo; f <= w.hi; f++) if (PC(OPEN[t] + f) === pc) want.push(`${t}-${f}`);
+    const got = [...solid, ...ghosts].map(q => `${q.s}-${q.f}`).sort();
+    eq(got.join(','), want.sort().join(','), `every ${SHARP_NAMES[pc]} in ${w.label} is accounted for`);
+  }
+  // The worked example from the bug report.
+  const w = windowAround(1, 7, 6);
+  const r = revealFor(buildPrompt({ kind: 'find', s: 1, pc: 7, window: w }), w.lo, w.hi);
+  eq(r.solid.map(p => `${STRINGS[p.s]}-${p.f}`).join(' '), 'A-10', 'G on the A string is A-10');
+  eq(r.ghosts.map(p => `${STRINGS[p.s]}-${p.f}`).sort().join(' '), 'B-8 G-12', 'the other Gs in frets 8-13');
 });
 
 console.log('\nThe ladder');

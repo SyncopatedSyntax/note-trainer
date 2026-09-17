@@ -10,7 +10,7 @@
 
 import { STRINGS, midiAt, pcAt, nameOf } from './theory.js';
 
-const MARK_COLOR = { ok: '#2ed573', octave: '#fbbf24', wrong: '#ef4444', reveal: '#fb923c' };
+const MARK_COLOR = { ok: '#2ed573', octave: '#fbbf24', wrong: '#ef4444', reveal: '#fb923c', ghost: '#6b6880' };
 
 export default function Fretboard({
   lo = 0, hi = 12,
@@ -20,6 +20,7 @@ export default function Fretboard({
   onTapCell = null,
   rowH = 36,
   fill = true,
+  maxHeight = null,
   accent = '#fb923c',
 }) {
   const FW = 36, RH = rowH, padL = 22, padT = 14, padB = 20, padR = 10;
@@ -30,10 +31,11 @@ export default function Fretboard({
   const ry = r => padT + r * RH;
   // Low E thickest at the bottom, high e thinnest at the top.
   const STRING_W = [2.4, 2.0, 1.7, 1.4, 1.1, 0.8];
+  const rDot = Math.max(7, Math.min(13, RH * 0.42));
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={fill
-      ? { display: 'block', margin: '0 auto', width: '100%', height: 'auto', userSelect: 'none', WebkitUserSelect: 'none', touchAction: 'manipulation' }
+      ? { display: 'block', margin: '0 auto', width: '100%', height: 'auto', ...(maxHeight ? { maxHeight } : {}), userSelect: 'none', WebkitUserSelect: 'none', touchAction: 'manipulation' }
       : { display: 'block', margin: '0 auto', width: 'auto', maxWidth: '100%', height: 260, userSelect: 'none', WebkitUserSelect: 'none' }}>
 
       {/* strings — index 0 (low E) at the bottom row, so row r holds string 5-r */}
@@ -84,7 +86,7 @@ export default function Fretboard({
         const cx = fx(d.f), cy = ry(5 - d.s), col = d.color || accent;
         return (
           <g key={'d' + i} pointerEvents="none">
-            <circle cx={cx} cy={cy} r={11} fill={col} />
+            <circle cx={cx} cy={cy} r={rDot} fill={col} />
             {d.label && (
               <text x={cx} y={cy + 0.5} fontSize={d.label.length > 2 ? 7 : 9.5}
                 fill="#17130c" textAnchor="middle" dominantBaseline="central" fontWeight="bold">{d.label}</text>
@@ -102,9 +104,12 @@ export default function Fretboard({
             <line x1={cx + 8} y1={cy - 8} x2={cx - 8} y2={cy + 8} />
           </g>
         );
-        return <circle key={'m' + i} pointerEvents="none" cx={cx} cy={cy} r={15} fill="none"
-          stroke={col} strokeWidth={m.kind === 'ok' ? 3 : 2.2}
-          strokeDasharray={m.kind === 'reveal' ? '4 3' : undefined} />;
+        if (m.kind === 'ghost') return (
+          <circle key={'m' + i} pointerEvents="none" cx={cx} cy={cy} r={rDot}
+            fill="none" stroke={col} strokeWidth={1.6} strokeDasharray="3 3" opacity={0.85} />
+        );
+        return <circle key={'m' + i} pointerEvents="none" cx={cx} cy={cy} r={rDot} fill="none"
+          stroke={col} strokeWidth={3} />;
       })}
 
       {/* Tap grid — LAST CHILD on purpose. SVG has no z-index, so paint order

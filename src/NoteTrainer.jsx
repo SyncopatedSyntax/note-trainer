@@ -6,7 +6,7 @@ import {
   nameOf, pcAt, midiAt, positionsOfPitch, allCards, cardId, parseCardId,
   windowAround, firstFretOf, positionsOf,
 } from './theory.js';
-import { buildPrompt, judge, VERDICT, DRILL_META, acceptedPositions } from './drills.js';
+import { buildPrompt, judge, VERDICT, DRILL_META, revealFor } from './drills.js';
 import { STAGES, stageByN, poolThrough, ACC_PASS, ACC_WINDOW, SPEED_WINDOW, SPEED_PASS } from './ladder.js';
 import {
   todayStr, dayDiff, updateSRS, isLearned, dueOn, accOf, ri, shuffle,
@@ -25,7 +25,22 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } },
 };
 
-const DEFAULTS = { spelling: 'sharp', sessionN: 12, showSpeed: true, sensitivity: 0.012 };
+const DEFAULTS = {
+  spelling: 'sharp', sessionN: 12, showSpeed: true,
+  sensitivity: 0.012,
+  // Treat anything that is not the answer as a mis-detection: keep listening
+  // rather than stopping the question. Off by default, because it also swallows
+  // genuine mistakes — it is a workaround for a flaky room, not a grading model.
+  ignoreWrong: false,
+  // On a correct note, move on by itself. Default on: the whole point of the mic
+  // is not having to touch the screen, and tapping Next after every right answer
+  // undoes that.
+  autoAdvance: true,
+};
+
+// How long the tick stays up before auto-advancing. Long enough to read the
+// time, short enough not to be a wait.
+const ADVANCE_MS = 850;
 
 // ── Microphone ───────────────────────────────────────────────────────────
 // Kept in a hook so the stream's lifetime is tied to the screen that needs it.
@@ -204,6 +219,34 @@ const primary = { width: '100%', background: ACCENT, color: '#17130c', border: '
 const ghost = { width: '100%', background: 'transparent', color: '#aaa', border: '1px solid #2a2840', borderRadius: 9, padding: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', minHeight: 44, touchAction: 'manipulation', marginTop: 8 };
 const pad = { padding: '14px 12px' };
 
+// Sensitivity is an RMS threshold, so SMALLER is more sensitive. MIN_SENS is
+// well below anything a clean amped signal needs, deliberately — it is there
+// for a quiet unplugged electric or a phone that is not next to the amp.
+const MIN_SENS = 0.0005, MAX_SENS = 0.04;
+
+function Toggle({ on, onClick, label, note }) {
+  return (
+    <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #1a1928' }}>
+      <button onClick={onClick} style={{
+        width: '100%', display: 'flex', alignItems: 'center', gap: 10, background: 'transparent',
+        border: 'none', padding: 0, cursor: 'pointer', minHeight: 44, color: '#fff', textAlign: 'left',
+      }}>
+        <span style={{
+          width: 40, height: 24, borderRadius: 12, flexShrink: 0, position: 'relative',
+          background: on ? ACCENT : '#2a2840', transition: 'background .15s',
+        }}>
+          <span style={{
+            position: 'absolute', top: 3, left: on ? 19 : 3, width: 18, height: 18, borderRadius: '50%',
+            background: on ? '#17130c' : '#6b6880', transition: 'left .15s',
+          }} />
+        </span>
+        <span style={{ fontSize: 12.5, fontWeight: 700, flex: 1 }}>{label}</span>
+      </button>
+      <div style={{ fontSize: 10.5, color: '#666', lineHeight: 1.6, marginTop: 4 }}>{note}</div>
+    </div>
+  );
+}
+
 // ── Input meter ──────────────────────────────────────────────────────────
 // Always visible while listening. Without it there is no way to tell whether
 // the app is deaf or you are wrong, which is the complaint that sinks every
@@ -237,6 +280,7 @@ function Session({ items, settings, grade, onDone, title }) {
   const [qi, setQi] = useState(0);
   const [answer, setAnswer] = useState(null);
   const [tally, setTally] = useState({ ok: 0, miss: 0 });
+  const [heard, setHeard] = useState(null);      // last ignored detection
   const askedAt = useRef(Date.now());
 
   const it = items[qi];
@@ -247,7 +291,14 @@ function Session({ items, settings, grade, onDone, title }) {
   // rather than the fix — but a crash mid-session is a worse outcome than a skip.
   useEffect(() => { if (it && !prompt) setQi(i => i + 1); }, [it, prompt]);
 
-  useEffect(() => { askedAt.current = Date.now(); mic.rearm(); }, [qi]);
+  useEffect(() => { askedAt.current = Date.now(); setHeard(null); mic.rearm(); }, [qi]);
+
+  // Auto-advance timer, held in a ref so ending the session or answering early
+  // cancels it rather than firing into a stale question.
+  const advTimer = useRef(null);
+  const clearAdv = () => { if (advTimer.current) { clearTimeout(advTimer.current); advTimer.current = null; } };
+  const next = useCallback(() => { clearAdv(); setAnswer(null); setHeard(null); setQi(i => i + 1); }, []);
+  useEffect(() => clearAdv, []);
 
   const commit = useCallback((verdict, secs) => {
     if (!it) return;
@@ -255,11 +306,31 @@ function Session({ items, settings, grade, onDone, title }) {
     setAnswer({ verdict, secs });
     setTally(t => ({ ok: t.ok + (correct ? 1 : 0), miss: t.miss + (correct ? 0 : 1) }));
     grade(it.id, correct, secs);
-  }, [it, grade]);
+    // Auto-advance lives here rather than in the listener so it covers the
+    // self-graded path too: tapping "Got it" and then "Next" is the same two
+    // taps the setting exists to remove.
+    if (correct && settings.autoAdvance) {
+      clearAdv();
+      advTimer.current = setTimeout(() => { advTimer.current = null; next(); }, ADVANCE_MS);
+    }
+  }, [it, grade, settings.autoAdvance, next]);
 
   mic.onNote(n => {
     if (answer || !prompt) return;
-    commit(judge(prompt, n.midi), (Date.now() - askedAt.current) / 1000);
+    const verdict = judge(prompt, n.midi);
+
+    // "Ignore what it thinks is wrong": treat anything that is not the answer
+    // as a mis-detection and keep listening. Nothing is graded and nothing is
+    // counted — the card is only marked wrong if you tap Missed yourself.
+    // The heard note is still shown, so an ignored note never looks like a
+    // dead microphone.
+    if (verdict !== VERDICT.OK && settings.ignoreWrong) {
+      setHeard({ midi: n.midi, at: Date.now() });
+      mic.rearm();
+      return;
+    }
+
+    commit(verdict, (Date.now() - askedAt.current) / 1000);
   });
 
   if (!it) {
@@ -280,11 +351,16 @@ function Session({ items, settings, grade, onDone, title }) {
     );
   }
 
-  const reveal = answer ? acceptedPositions(prompt, prompt.window?.lo ?? 0, prompt.window?.hi ?? MAX_FRET) : [];
-  const marks = answer
-    ? reveal.map(p => ({ ...p, kind: answer.verdict === VERDICT.OK ? 'ok' : 'reveal' }))
-    : [];
   const lo = prompt.window?.lo ?? 0, hi = Math.min(prompt.window?.hi ?? 12, MAX_FRET);
+  // Solid ring = the answer to the question as asked. Dashed = the same note
+  // elsewhere in the window. Previously every position sounding an accepted
+  // pitch got the same ring, which answered a question nobody asked and buried
+  // the one that was.
+  const { solid, ghosts } = answer ? revealFor(prompt, lo, hi) : { solid: [], ghosts: [] };
+  const marks = answer ? [
+    ...ghosts.map(p => ({ ...p, kind: 'ghost' })),
+    ...solid.map(p => ({ ...p, kind: answer.verdict === VERDICT.OK ? 'ok' : 'reveal' })),
+  ] : [];
 
   return (
     <div style={pad}>
@@ -319,10 +395,19 @@ function Session({ items, settings, grade, onDone, title }) {
 
       {/* Nothing is drawn on the neck during a question — a reviewer of a rival
           app caught themselves "using the pattern instead of learning the notes". */}
-      <div style={{ margin: '0 -12px 10px' }}>
+      <div style={{ margin: '0 -4px 10px' }}>
         <Fretboard lo={lo} hi={hi} marks={marks} anchor={prompt.anchor || null}
-          dots={answer && prompt.kind === 'name' ? [] : []} />
+          rowH={20} maxHeight={168} />
       </div>
+
+      {/* Two ring styles need naming once, or the dashed ones read as a second
+          answer rather than as context. Only shown when there is a ghost to explain. */}
+      {answer && ghosts.length > 0 && (
+        <div style={{ display: 'flex', gap: 14, justifyContent: 'center', fontSize: 10, color: '#777', marginTop: -4, marginBottom: 8 }}>
+          <span style={{ color: answer.verdict === VERDICT.OK ? '#2ed573' : ACCENT }}>◉ the answer</span>
+          <span>◌ same note nearby</span>
+        </div>
+      )}
 
       {answer ? (
         <div style={{ ...card, borderColor: answer.verdict === VERDICT.OK ? '#2ed57355' : '#fbbf2455' }}>
@@ -333,15 +418,22 @@ function Session({ items, settings, grade, onDone, title }) {
           </div>
           {/* Always show the answer. A miss with no correction is a wasted rep. */}
           <div style={{ fontSize: 11.5, color: '#bbb', marginTop: 6, lineHeight: 1.6 }}>
-            {reveal.map(p => `${STRINGS[p.s]} string, fret ${p.f}`).join('  ·  ')}
-            {reveal.length > 1 && <span style={{ color: '#777' }}><br />Both sound the same pitch — either is correct.</span>}
+            {solid.map(p => `${STRINGS[p.s]} string, fret ${p.f}`).join('  ·  ')}
+            {solid.length > 1 && <span style={{ color: '#777' }}><br />Both sound the same pitch — either is correct.</span>}
           </div>
-          <button onClick={() => { setAnswer(null); setQi(i => i + 1); }} style={primary}>Next ›</button>
+          {/* A correct answer auto-advances, so the button is only the manual
+              path — and after a miss it is the only way on, which is deliberate:
+              a wrong answer should cost you a beat to look at. */}
+          <button onClick={next} style={primary}>
+            {answer.verdict === VERDICT.OK && settings.autoAdvance ? 'Next ›  (auto)' : 'Next ›'}
+          </button>
         </div>
       ) : (
         <div style={{ ...card }}>
           <div style={{ fontSize: 11, color: '#777', textAlign: 'center', marginBottom: 8 }}>
-            Play it on your guitar.
+            {heard
+              ? <>Heard <b style={{ color: '#aaa' }}>{nameOf(heard.midi % 12, settings.spelling)}{Math.floor(heard.midi / 12) - 1}</b> — not it, still listening.</>
+              : 'Play it on your guitar.'}
           </div>
           {/* The fallback. Keeps the session alive when the room is loud, the
               permission is denied, or the amp is fighting the detector. */}
@@ -797,15 +889,51 @@ function SettingsTab({ settings, setSettings, setSrs, setLat, setStageN, setPlac
       </div>
 
       <div style={card}>
-        <div style={h}>Microphone sensitivity</div>
-        <input type="range" min="0.004" max="0.04" step="0.002" value={settings.sensitivity}
-          onChange={e => set({ sensitivity: Number(e.target.value) })}
-          style={{ width: '100%', accentColor: ACCENT }} />
-        <div style={{ fontSize: 10.5, color: '#666', lineHeight: 1.6, marginTop: 4 }}>
-          Lower if quiet playing is being missed; raise it if a noisy room triggers answers
-          on its own. A clean amp tone detects far better than a driven one — distortion adds
-          harmonics that pull the detector an octave off.
+        <div style={h}>Microphone</div>
+
+        {/* The floor is far below what a clean amped signal needs: a quiet
+            unplugged electric, or a phone across the room, can sit under 0.002.
+            The slider runs on a square curve so the useful low end gets most of
+            the travel instead of being squeezed into the first few pixels. */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+          <span style={{ fontSize: 12, color: '#bbb' }}>Sensitivity</span>
+          <span style={{ fontSize: 10.5, color: ACCENT, fontFamily: 'var(--font-mono)' }}>
+            {settings.sensitivity <= 0.0015 ? 'very high'
+              : settings.sensitivity <= 0.006 ? 'high'
+              : settings.sensitivity <= 0.016 ? 'normal' : 'low'}
+          </span>
         </div>
+        <input type="range" min="0" max="1" step="0.02"
+          value={Math.sqrt(Math.max(0, (MAX_SENS - settings.sensitivity) / (MAX_SENS - MIN_SENS)))}
+          onChange={e => {
+            const t = Number(e.target.value);
+            set({ sensitivity: Math.round((MAX_SENS - t * t * (MAX_SENS - MIN_SENS)) * 10000) / 10000 });
+          }}
+          style={{ width: '100%', accentColor: ACCENT }} />
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9.5, color: '#666', marginTop: -2 }}>
+          <span>less sensitive</span><span>more sensitive</span>
+        </div>
+        <div style={{ fontSize: 10.5, color: '#666', lineHeight: 1.6, marginTop: 6 }}>
+          Raise it if quiet playing is being missed; lower it if a noisy room answers for you.
+          A clean amp tone detects far better than a driven one — distortion adds harmonics
+          that pull the detector an octave off.
+        </div>
+
+        <Toggle
+          on={settings.ignoreWrong}
+          onClick={() => set({ ignoreWrong: !settings.ignoreWrong })}
+          label="Ignore notes it gets wrong"
+          note="Anything that isn't the answer is treated as a mis-detection: the app keeps
+                listening instead of stopping the question, and it is not counted against you.
+                Only tapping Missed marks a card wrong. It also swallows genuine mistakes —
+                including the right note in the wrong octave — which is the trade." />
+
+        <Toggle
+          on={settings.autoAdvance}
+          onClick={() => set({ autoAdvance: !settings.autoAdvance })}
+          label="Move on by itself when right"
+          note="A correct note shows a tick and your time, then advances without a tap. A wrong
+                one still waits for you — that pause is the point." />
       </div>
 
       <div style={card}>

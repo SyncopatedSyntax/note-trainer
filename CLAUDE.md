@@ -61,6 +61,55 @@ pitch class, so the mic grades them outright. This was nearly overclaimed: a
 *per-string* extremal does **not** disambiguate the string — 66 of 72 (92%) are
 still reachable elsewhere. There is a test asserting that stays false.
 
+## Two escape hatches for a flaky room
+
+Both are settings, both off the critical path, and both exist because the
+detector is the least reliable part of the app.
+
+- **`ignoreWrong`** — anything that is not the answer is treated as a
+  mis-detection: keep listening, do not stop the question, **do not grade it**.
+  The card is only marked wrong if you tap Missed. Deliberately this swallows
+  *genuine* mistakes too, including the right note in the wrong octave — Zak
+  chose that explicitly. It is a workaround for a noisy room, not a grading
+  model, so it is **off by default**; leaving it on makes accuracy optimistic.
+  The heard note is still displayed ("Heard D♯3 — not it, still listening") so
+  an ignored note never looks like a dead microphone.
+- **`autoAdvance`** — a correct answer shows a tick and the time, then moves on
+  after `ADVANCE_MS` without a tap. **On by default**: the whole point of the
+  mic is not touching the screen, and tapping Next after every right answer
+  undoes that. A *wrong* answer still waits for you, which is the point — that
+  pause is when you look at where the note actually was.
+
+  It lives in `commit()`, not in the mic listener, so it covers the self-graded
+  path too. The timer is a ref and is cleared on unmount and on every answer, or
+  it fires into a stale question.
+
+**Sensitivity is an RMS threshold, so SMALLER is more sensitive.** The floor is
+`MIN_SENS = 0.0005` — far below anything a clean amped signal needs, because a
+quiet unplugged electric or a phone that is not next to the amp sits under
+0.002. The slider maps on a square curve so the useful low end gets most of the
+travel instead of being squeezed into the first few pixels.
+
+## What the reveal draws
+
+Two ring styles, and the distinction is load-bearing:
+
+- **Solid** = the answer **to the question as asked**. When the prompt named a
+  string, this is restricted to that string. Showing "G on the A string" as four
+  rings across four strings answers a question nobody asked and buries the one
+  that was.
+- **Dashed** = the same *note* elsewhere in the window, on other strings.
+  Context, never an answer.
+
+`revealFor(prompt, lo, hi)` does the split, and `verify.mjs` asserts that the two
+sets together are exactly every instance of that note in the window — nothing
+duplicated, nothing silently dropped.
+
+**The board is informational, not interactive.** The mic grades, so nothing is
+tapped on it, which frees it from the 44px row minimum that used to size it. It
+renders at `rowH={20}` capped to 168px — down from ~370px, which was pushing the
+Next button off screen.
+
 ## Grading is three-way
 
 `VERDICT.OK` / `OCTAVE` / `WRONG`. The middle one is not decoration: "right note,
