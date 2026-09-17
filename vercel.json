@@ -3,7 +3,7 @@
   "redirects": [
     {
       "source": "/",
-      "has": [{ "type": "host", "value": "note-trainer.vercel.app" }],
+      "has": [{ "type": "host", "value": "note-trainer-eight.vercel.app" }],
       "destination": "https://fretworks.vercel.app/notes",
       "permanent": true
     }
