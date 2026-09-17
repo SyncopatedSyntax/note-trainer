@@ -56,7 +56,13 @@ export function buildPrompt(spec) {
   const { kind } = spec;
   const win = spec.window || WINDOWS.neck;
   const sp = spec.spelling || 'sharp';
+  // A prompt with an empty accept set is an unanswerable question. That is not
+  // a display bug, it is a question that cannot be got right — "play G on the A
+  // string, frets 0-5" has no answer, because the A string does not sound a G
+  // until fret 10. Return null and let the caller pick something else, rather
+  // than shipping a question with no correct response.
   const B = (text, positions, extra = {}) => {
+    if (!positions || !positions.length) return null;
     const accept = new Set(positions.map(p => midiAt(p.s, p.f)));
     return { ...spec, kind, text, positions, accept, ...extra };
   };
@@ -82,8 +88,12 @@ export function buildPrompt(spec) {
   }
 
   if (kind === 'nearest') {
+    // Default to searching the whole neck, not just the anchor's string: the
+    // same note recurs on one string only 12 frets away, so a same-string
+    // search has no answer for most notes on a 15-fret neck. Cross-string is
+    // also the real operation — "from where my hand is, where is the nearest G".
     const n = nearestFrom(spec.pc, spec.anchor, {
-      sameString: spec.sameString !== false, dir: spec.dir || 'either', lo: win.lo, hi: win.hi,
+      sameString: spec.sameString === true, dir: spec.dir || 'either', lo: win.lo, hi: win.hi,
     });
     if (!n) return null;
     const a = spec.anchor;
@@ -116,6 +126,7 @@ export function buildPrompt(spec) {
     const pos = positionsOf(spec.pc, { lo: win.lo, hi: win.hi })
       .sort((a, b) => midiAt(a.s, a.f) - midiAt(b.s, b.f));
     const seq = uniq(pos.map(p => midiAt(p.s, p.f)));
+    if (!seq.length) return null;
     return { ...spec, kind, text: `Play every ${nameOf(spec.pc, sp)}, low to high`,
       positions: pos, seq, accept: new Set(seq), hint: win.label };
   }

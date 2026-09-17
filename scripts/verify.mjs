@@ -12,7 +12,7 @@
 import {
   MAX_FRET, STRINGS, SHARP_NAMES, FLAT_NAMES, NATURAL_PCS, WINDOWS,
   pcAt, midiAt, nameOf, parseNote, allCards, cardId,
-  positionsOf, positionsOfPitch, extremal, nearestFrom,
+  positionsOf, positionsOfPitch, extremal, nearestFrom, windowAround, firstFretOf,
 } from '../src/theory.js';
 import { buildPrompt, judge, VERDICT, sequenceIsUnambiguous, PITCH_UNIQUE } from '../src/drills.js';
 import { STAGES, poolThrough } from '../src/ladder.js';
@@ -171,11 +171,16 @@ check('nearest-from-anchor lands on the closest instance', () => {
 console.log('\nPrompts and grading');
 
 check('every find prompt accepts exactly the notes on the named string', () => {
+  // Windows come from windowAround, so each is guaranteed to contain the note —
+  // the fixed windows this used to iterate included ones where it does not, and
+  // the assertion passed on empty === empty. That hole is now its own check.
   for (let s = 0; s < 6; s++) for (let pc = 0; pc < 12; pc++) {
-    for (const w of [WINDOWS.low, WINDOWS.neck, WINDOWS.full]) {
+    for (const span of [6, 9, MAX_FRET + 1]) {
+      const w = windowAround(s, pc, span);
       const p = buildPrompt({ kind: 'find', s, pc, window: w });
       const want = [];
       for (let f = w.lo; f <= w.hi; f++) if (PC(OPEN[s] + f) === pc) want.push(OPEN[s] + f);
+      ok(want.length > 0, `${SHARP_NAMES[pc]} on ${STRINGS[s]} exists in ${w.label}`);
       eq([...p.accept].sort((a, b) => a - b).join(','), want.sort((a, b) => a - b).join(','),
         `find ${SHARP_NAMES[pc]} on ${STRINGS[s]} in ${w.label}`);
       ok(p.text.includes(STRINGS[s]), 'prompt names the string');
@@ -240,6 +245,83 @@ check('key degrees are the major scale, not something adjacent to it', () => {
     const p = buildPrompt({ kind: 'keyDegree', keyPc: key, degree: d, window: WINDOWS.neck });
     eq(p.pc, (key + MAJ[d - 1]) % 12, `degree ${d} of ${SHARP_NAMES[key]}`);
     for (const m of p.accept) eq(PC(m), p.pc, 'accepted pitches are that degree');
+  }
+});
+
+check('EVERY question the app can generate is answerable', () => {
+  // The invariant that was missing, and it is the one that matters most: the
+  // earlier test compared the app's answer set against an independently computed
+  // one and passed when BOTH were empty. It verified "the answer set matches"
+  // and never "the question has an answer".
+  //
+  // It did not: "play G on the A string, frets 0-5" shipped. The A string does
+  // not sound a G until fret 10. Three of the seven naturals were unanswerable
+  // on each of the first two stages — 43% of the earliest material.
+  for (let s = 0; s < 6; s++) for (let pc = 0; pc < 12; pc++) {
+    for (const span of [6, 9, MAX_FRET + 1]) {
+      const w = windowAround(s, pc, span);
+      assertions++;
+      if (w.lo < 0 || w.hi > MAX_FRET || w.hi < w.lo) fail(`window ${w.label} is off the neck`);
+      // Re-derived here, not taken from the app: does this string sound this
+      // note somewhere in that window?
+      let found = false;
+      for (let f = w.lo; f <= w.hi; f++) if (PC(OPEN[s] + f) === pc) found = true;
+      if (!found) fail(`${SHARP_NAMES[pc]} on the ${STRINGS[s]} string is not in ${w.label}`);
+
+      const p = buildPrompt({ kind: 'find', s, pc, window: w });
+      assertions++;
+      if (!p) fail(`find ${SHARP_NAMES[pc]} on ${STRINGS[s]} in ${w.label} returned null`);
+      if (!p.accept.size) fail(`find ${SHARP_NAMES[pc]} on ${STRINGS[s]} in ${w.label} has NO correct answer`);
+    }
+  }
+});
+
+check('buildPrompt refuses an unanswerable question instead of shipping it', () => {
+  // The exact case from the bug report.
+  eq(buildPrompt({ kind: 'find', s: 1, pc: 7, window: WINDOWS.low }), null,
+    'G on the A string in frets 0-5 must be refused');
+  // And every other empty combination, rather than just that one.
+  let refused = 0, asked = 0;
+  for (let s = 0; s < 6; s++) for (let pc = 0; pc < 12; pc++) {
+    for (const w of [WINDOWS.open, WINDOWS.low, WINDOWS.mid, WINDOWS.upper]) {
+      let found = false;
+      for (let f = w.lo; f <= w.hi; f++) if (PC(OPEN[s] + f) === pc) found = true;
+      const p = buildPrompt({ kind: 'find', s, pc, window: w });
+      assertions++;
+      if (found && !p) fail(`${SHARP_NAMES[pc]} on ${STRINGS[s]} IS in ${w.label} but was refused`);
+      if (!found && p) fail(`${SHARP_NAMES[pc]} on ${STRINGS[s]} is NOT in ${w.label} but a prompt was built`);
+      found ? asked++ : refused++;
+    }
+  }
+  ok(refused > 0 && asked > 0, `${refused} impossible combinations refused, ${asked} built`);
+});
+
+check('every other drill kind is answerable wherever it is offered', () => {
+  for (let pc = 0; pc < 12; pc++) {
+    for (const dir of ['lowest', 'highest']) {
+      const p = buildPrompt({ kind: 'extremal', pc, dir, window: WINDOWS.full });
+      assertions++;
+      if (!p || !p.accept.size) fail(`${dir} ${SHARP_NAMES[pc]} on the full neck has no answer`);
+    }
+    const fa = buildPrompt({ kind: 'findAll', pc, window: WINDOWS.neck });
+    assertions++;
+    if (!fa || !fa.seq.length) fail(`findAll ${SHARP_NAMES[pc]} has no answer`);
+    // nearest, from every anchor the app can pick
+    for (let s = 0; s < 6; s++) for (let f = 0; f <= 12; f++) {
+      const n = buildPrompt({ kind: 'nearest', pc, window: WINDOWS.full, anchor: { s, f } });
+      assertions++;
+      if (!n || !n.accept.size) fail(`nearest ${SHARP_NAMES[pc]} from ${STRINGS[s]}-${f} has no answer`);
+    }
+  }
+  for (const shape of ['E', 'G', 'A', 'C', 'D']) for (let pc = 0; pc < 12; pc++) {
+    const p = buildPrompt({ kind: 'barreRoot', shape, pc, window: WINDOWS.full });
+    assertions++;
+    if (!p || !p.accept.size) fail(`${shape}-shape root for ${SHARP_NAMES[pc]} has no answer`);
+  }
+  for (let key = 0; key < 12; key++) for (let d = 1; d <= 7; d++) {
+    const p = buildPrompt({ kind: 'keyDegree', keyPc: key, degree: d, window: WINDOWS.full });
+    assertions++;
+    if (!p || !p.accept.size) fail(`degree ${d} of ${SHARP_NAMES[key]} has no answer`);
   }
 });
 

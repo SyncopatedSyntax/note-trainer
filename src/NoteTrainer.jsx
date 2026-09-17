@@ -4,6 +4,7 @@ import Fretboard from './Fretboard.jsx';
 import {
   STRINGS, WINDOWS, NATURAL_PCS, MAX_FRET,
   nameOf, pcAt, midiAt, positionsOfPitch, allCards, cardId, parseCardId,
+  windowAround, firstFretOf, positionsOf,
 } from './theory.js';
 import { buildPrompt, judge, VERDICT, DRILL_META, acceptedPositions } from './drills.js';
 import { STAGES, stageByN, poolThrough, ACC_PASS, ACC_WINDOW, SPEED_WINDOW, SPEED_PASS } from './ladder.js';
@@ -77,26 +78,28 @@ function useMic(sensitivity) {
 // nothing reshuffles under a half-answered question.
 function makeItem(card, stage, settings) {
   const { s, pc } = parseCardId(card.id);
-  const win = stage.n <= 2 ? WINDOWS.low : stage.n <= 6 ? WINDOWS.neck : WINDOWS.full;
-  const roll = Math.random();
   const spelling = settings.spelling;
+  // The window SLIDES to wherever this note is on this string rather than being
+  // a fixed range the note may not be in. A fixed 0-5 made three of the seven
+  // naturals unanswerable on each of the first two stages.
+  const span = stage.n <= 2 ? 6 : stage.n <= 6 ? 9 : MAX_FRET + 1;
+  const win = windowAround(s, pc, span);
+  const roll = Math.random();
 
   // Early stages stay on the plain find drill — a novice cannot exploit variety,
   // and the point of a blocked stage is the one operation. Variety arrives with
   // the interleaved stages, on the axis that actually causes confusion.
-  if (stage.blocked || roll < 0.55) return { ...card, spec: { kind: 'find', s, pc, window: win, spelling } };
-  if (roll < 0.70) return { ...card, spec: { kind: 'name', s, f: positionFor(s, pc, win), spelling } };
-  if (roll < 0.85) return { ...card, spec: { kind: 'extremal', pc, dir: Math.random() < 0.5 ? 'lowest' : 'highest', window: win, spelling } };
-  return {
-    ...card,
-    spec: { kind: 'nearest', pc, window: win, spelling, sameString: true,
-      anchor: { s, f: ri(Math.min(12, win.hi) + 1) } },
-  };
+  const spec =
+    (stage.blocked || roll < 0.55) ? { kind: 'find', s, pc, window: win, spelling }
+    : roll < 0.70 ? { kind: 'name', s, f: firstFretOf(s, pc), spelling }
+    : roll < 0.85 ? { kind: 'extremal', pc, dir: Math.random() < 0.5 ? 'lowest' : 'highest', window: WINDOWS.full, spelling }
+    : { kind: 'nearest', pc, window: WINDOWS.full, spelling,
+        anchor: { s, f: ri(13) } };
+
+  // Belt and braces: if a variant somehow has no answer, fall back to the find
+  // drill, whose window is constructed to contain one.
+  return { ...card, spec: buildPrompt(spec) ? spec : { kind: 'find', s, pc, window: win, spelling } };
 }
-const positionFor = (s, pc, win) => {
-  for (let f = win.lo; f <= win.hi; f++) if (pcAt(s, f) === pc) return f;
-  return win.lo;
-};
 
 // ════════════════════════════════════════════════════════════════════════
 export default function App() {
@@ -239,6 +242,11 @@ function Session({ items, settings, grade, onDone, title }) {
   const it = items[qi];
   const prompt = useMemo(() => (it ? buildPrompt(it.spec) : null), [it]);
 
+  // buildPrompt returns null for a question with no correct answer. Callers are
+  // supposed to filter those out before they reach here, so this is a backstop
+  // rather than the fix — but a crash mid-session is a worse outcome than a skip.
+  useEffect(() => { if (it && !prompt) setQi(i => i + 1); }, [it, prompt]);
+
   useEffect(() => { askedAt.current = Date.now(); mic.rearm(); }, [qi]);
 
   const commit = useCallback((verdict, secs) => {
@@ -294,7 +302,19 @@ function Session({ items, settings, grade, onDone, title }) {
 
       <div style={{ ...card, textAlign: 'center' }}>
         <div style={{ fontSize: 17, fontWeight: 800, lineHeight: 1.4 }}>{prompt.text}</div>
-        {prompt.hint && !answer && <div style={{ fontSize: 11, color: '#777', marginTop: 5 }}>{prompt.hint}</div>}
+        {/* The fret range is half the question, not a footnote. It used to be
+            11px grey under the prompt and was easy to miss entirely — so it is
+            now a chip in the accent colour, and the board below is drawn to
+            exactly this range, which says the same thing a second way. */}
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 9,
+          padding: '5px 12px', borderRadius: 14, background: ACCENT + '1e', border: `1px solid ${ACCENT}55` }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: ACCENT, fontFamily: 'var(--font-mono)' }}>
+            {lo === 0 ? `frets ${lo}\u2013${hi}` : `frets ${lo}\u2013${hi}`}
+          </span>
+          <span style={{ fontSize: 10.5, color: '#8a8a9a' }}>
+            {lo === 0 ? 'open position' : `${hi - lo + 1}-fret window`}
+          </span>
+        </div>
       </div>
 
       {/* Nothing is drawn on the neck during a question — a reviewer of a rival
@@ -517,16 +537,25 @@ function DrillsTab({ pool, srs, settings, grade }) {
   if (session) return <Session {...session} settings={settings} grade={grade} onDone={() => setSession(null)} />;
 
   const run = kind => {
-    const win = WINDOWS[winKey];
+    const picked = WINDOWS[winKey];
     const pcs = naturals ? NATURAL_PCS : [0,1,2,3,4,5,6,7,8,9,10,11];
     const cards = shuffle(pcs).map(pc => ({ id: cardId(s, pc), s, pc }));
-    const items = cards.slice(0, settings.sessionN).map(c => ({
-      ...c,
-      spec: kind === 'find' ? { kind: 'find', s, pc: c.pc, window: win, spelling: settings.spelling }
-        : kind === 'extremal' ? { kind: 'extremal', pc: c.pc, dir: Math.random() < 0.5 ? 'lowest' : 'highest', window: win, spelling: settings.spelling }
-        : kind === 'findAll' ? { kind: 'findAll', pc: c.pc, window: win, spelling: settings.spelling }
-        : { kind: 'name', s, f: positionFor(s, c.pc, win), spelling: settings.spelling },
-    }));
+    const items = cards.slice(0, settings.sessionN).map(c => {
+      // A chosen window may not contain this note on this string — the A string
+      // has no G below fret 10. Slide a window of the same width to where the
+      // note is rather than asking something unanswerable.
+      const span = picked.hi - picked.lo + 1;
+      const win = positionsOf(c.pc, { strings: [s], lo: picked.lo, hi: picked.hi }).length
+        ? picked : windowAround(s, c.pc, span);
+      return {
+        ...c,
+        spec: kind === 'find' ? { kind: 'find', s, pc: c.pc, window: win, spelling: settings.spelling }
+          : kind === 'extremal' ? { kind: 'extremal', pc: c.pc, dir: Math.random() < 0.5 ? 'lowest' : 'highest', window: WINDOWS.full, spelling: settings.spelling }
+          : kind === 'findAll' ? { kind: 'findAll', pc: c.pc, window: picked, spelling: settings.spelling }
+          : { kind: 'name', s, f: firstFretOf(s, c.pc), spelling: settings.spelling },
+      };
+    }).filter(i => buildPrompt(i.spec));
+    if (!items.length) return;
     setSession({ items, title: DRILL_META[kind].short });
   };
 

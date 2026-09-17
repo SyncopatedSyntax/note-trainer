@@ -76,6 +76,36 @@ export const WINDOWS = {
   full:  { lo: 0,  hi: MAX_FRET, label: `frets 0–${MAX_FRET}` },
 };
 
+// ── Windows that actually contain the answer ─────────────────────────────
+// A fixed narrow window cannot ask about every note. In frets 0-5 the low E
+// string only sounds E F F# G G# A — so "play C on the low E string, frets 0-5"
+// has no answer at all. Three of the seven naturals were unanswerable on each of
+// the first two stages before this existed.
+//
+// The fix is to keep the window narrow but SLIDE it to wherever the note is,
+// which is also better pedagogy: a fret window is really a hand position, and
+// positions I, V, VII and XII are how the classical and Berklee curricula teach
+// reading. So the constraint becomes "this note, in this six-fret position"
+// rather than "this note, if it happens to be near the nut".
+
+// The lowest fret on this string that sounds `pc`. Always 0-11, always exists.
+export const firstFretOf = (s, pc) => {
+  for (let f = 0; f < 12; f++) if (pcAt(s, f) === pcOf(pc)) return f;
+  return 0;                                        // unreachable in 12-TET
+};
+
+export const mkWindow = (lo, hi) => ({ lo, hi, label: `frets ${lo}\u2013${hi}` });
+
+// A window of `span` frets guaranteed to contain `pc` on string `s`. Prefers the
+// open position when the note lives there, since that is where a beginner looks
+// first; otherwise centres the window on the note and clamps to the neck.
+export function windowAround(s, pc, span = 6, maxFret = MAX_FRET) {
+  const f = firstFretOf(s, pc);
+  if (f <= span - 1) return mkWindow(0, Math.min(span - 1, maxFret));
+  const lo = Math.min(Math.max(0, f - Math.floor((span - 1) / 2)), Math.max(0, maxFret - span + 1));
+  return mkWindow(lo, Math.min(lo + span - 1, maxFret));
+}
+
 // ── Where a note lives ───────────────────────────────────────────────────
 // Every (s,f) in the window that sounds pitch class `pc`.
 export function positionsOf(pc, { strings = [0, 1, 2, 3, 4, 5], lo = 0, hi = MAX_FRET } = {}) {
