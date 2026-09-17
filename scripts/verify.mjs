@@ -16,6 +16,7 @@ import {
 } from '../src/theory.js';
 import { buildPrompt, judge, VERDICT, sequenceIsUnambiguous, PITCH_UNIQUE } from '../src/drills.js';
 import { STAGES, poolThrough } from '../src/ladder.js';
+import { detectPitch } from '../src/pitch.js';
 
 let failures = 0, assertions = 0;
 const check = (name, fn) => {
@@ -275,6 +276,91 @@ check('the ordering is the one the pedagogy agrees on', () => {
   // Speed targets widen as the search space grows.
   ok(STAGES[0].speed < STAGES[6].speed, 'one string is a tighter target than six');
   for (const st of STAGES) ok(st.speed >= 2 && st.speed <= 6, `stage ${st.n} target is sane`);
+});
+
+console.log('\nPitch detection');
+
+// Synthesised guitar tones. The adversarial profile is the one that matters:
+// an electric through a pickup carries MORE energy in the 2nd and 3rd harmonics
+// than in the fundamental, which is exactly what makes naive autocorrelation
+// report an octave too high. If the detector survives this it survives an amp.
+const PROFILES = {
+  plucked:    [1.00, 0.55, 0.30, 0.15, 0.08, 0.04],
+  electric:   [0.40, 1.00, 0.70, 0.30, 0.15, 0.07],   // fundamental is NOT the loudest
+  thin:       [0.15, 0.60, 1.00, 0.55, 0.25, 0.10],   // bridge pickup, very thin
+};
+function tone(hz, rate, n, profile, noise = 0, decay = 2.5) {
+  const b = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / rate;
+    let v = 0;
+    profile.forEach((a, h) => { v += a * Math.sin(2 * Math.PI * hz * (h + 1) * t + h); });
+    b[i] = v * Math.exp(-decay * t) / profile.length + (noise ? (Math.random() * 2 - 1) * noise : 0);
+  }
+  return b;
+}
+
+check('the detector finds the fundamental at every position on the neck', () => {
+  const rate = 48000, N = 4096;
+  for (const [name, prof] of Object.entries(PROFILES)) {
+    let worst = 0;
+    for (let s = 0; s < 6; s++) for (let f = 0; f <= MAX_FRET; f++) {
+      const midi = OPEN[s] + f;
+      const hz = 440 * Math.pow(2, (midi - 69) / 12);
+      const got = detectPitch(tone(hz, rate, N, prof), rate);
+      assertions++;
+      if (!got) fail(`${name}: no detection at ${STRINGS[s]}-${f} (${hz.toFixed(1)}Hz)`);
+      const gotMidi = Math.round(69 + 12 * Math.log2(got.hz / 440));
+      if (gotMidi !== midi) fail(`${name}: ${STRINGS[s]}-${f} heard as MIDI ${gotMidi}, expected ${midi} — likely a harmonic`);
+      worst = Math.max(worst, Math.abs(1200 * Math.log2(got.hz / hz)));
+    }
+    ok(worst < 25, `${name}: worst error ${worst.toFixed(1)} cents is within tolerance`);
+  }
+});
+
+check('low E survives, which is where FFT would have failed', () => {
+  // E2 = 82.41 Hz. A 2048-bin FFT at 48k has ~23 Hz bins — wide enough to
+  // confuse E2 with F2 (87.31) and F#2 (92.50). The time-domain method must
+  // separate all three cleanly.
+  const rate = 48000, N = 4096;
+  for (const [midi, label] of [[40, 'E2'], [41, 'F2'], [42, 'F#2'], [43, 'G2']]) {
+    const hz = 440 * Math.pow(2, (midi - 69) / 12);
+    const got = detectPitch(tone(hz, rate, N, PROFILES.electric), rate);
+    assertions++;
+    if (!got) fail(`${label} not detected at all`);
+    eq(Math.round(69 + 12 * Math.log2(got.hz / 440)), midi, `${label} resolved`);
+  }
+});
+
+check('it holds up with noise, and reports nothing when there is no note', () => {
+  const rate = 48000, N = 4096;
+  const hz = 440 * Math.pow(2, (55 - 69) / 12);          // G3, open G
+  for (const noise of [0.02, 0.05, 0.10]) {
+    const got = detectPitch(tone(hz, rate, N, PROFILES.electric, noise), rate);
+    assertions++;
+    if (!got) fail(`lost the note under ${noise} noise`);
+    eq(Math.round(69 + 12 * Math.log2(got.hz / 440)), 55, `G3 under ${noise} noise`);
+  }
+  // Pure noise must not produce a confident reading.
+  const junk = new Float32Array(N);
+  for (let i = 0; i < N; i++) junk[i] = (Math.random() * 2 - 1) * 0.3;
+  const g = detectPitch(junk, rate);
+  ok(!g || g.clarity < 0.82, 'noise is rejected or reported with low clarity');
+  // Silence likewise.
+  ok(!detectPitch(new Float32Array(N), rate), 'silence returns nothing');
+});
+
+check('it works at both sample rates iOS might hand us', () => {
+  // iOS has historically pinned the context to 44100 regardless of the device.
+  for (const rate of [44100, 48000]) {
+    for (const midi of [40, 55, 64, 79]) {
+      const hz = 440 * Math.pow(2, (midi - 69) / 12);
+      const got = detectPitch(tone(hz, rate, 4096, PROFILES.plucked), rate);
+      assertions++;
+      if (!got) fail(`MIDI ${midi} at ${rate}Hz not detected`);
+      eq(Math.round(69 + 12 * Math.log2(got.hz / 440)), midi, `MIDI ${midi} at ${rate}Hz`);
+    }
+  }
 });
 
 console.log('\nSpaced repetition');
