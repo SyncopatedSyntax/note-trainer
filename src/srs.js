@@ -12,9 +12,12 @@
 // the SESSION supplies the motor volume through within-session repetition.
 // Don't assume an interval that keeps the name alive keeps the hand fluent.
 
+// Days are UTC calendar days (todayStr), so the arithmetic is done in UTC too.
+// Local-time arithmetic put "tomorrow" on today anywhere east of Greenwich,
+// and lost a day whenever a gap crossed a clock change.
 export const todayStr = () => new Date().toISOString().slice(0, 10);
-export const addDays = (s, n) => { const d = new Date(s + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
-export const dayDiff = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000);
+export const addDays = (s, n) => { const d = new Date(s + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+export const dayDiff = (a, b) => Math.round((new Date(b + 'T00:00:00Z') - new Date(a + 'T00:00:00Z')) / 86400000);
 
 export function updateSRS(card, correct) {
   const ef = card?.ef ?? 2.5, reps = card?.reps ?? 0, interval = card?.interval ?? 1;

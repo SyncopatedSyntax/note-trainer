@@ -9,6 +9,8 @@
 // tuning. Importing the app's own maths to generate the expectations would only
 // prove it agrees with itself.
 
+import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import {
   MAX_FRET, STRINGS, SHARP_NAMES, FLAT_NAMES, NATURAL_PCS, WINDOWS,
   pcAt, midiAt, nameOf, parseNote, allCards, cardId,
@@ -523,6 +525,38 @@ check('every persisted value survives a ProgressBackup round trip', () => {
     ['nt_srs', JSON.stringify({ '0|5': { ef: 2.5, interval: 6, reps: 2, nextDue: '2026-09-20', seen: 4, wrong: 1 } })],
     ['nt_latency', JSON.stringify({ '0|5': [2.1, 1.8] })],
   ]) eq(roundTrip(raw), raw, `${key} round trip`);
+});
+
+// ── Dates, in every timezone ─────────────────────────────────────────────
+// Due dates are UTC calendar days (todayStr), so addDays/dayDiff have to be
+// plain calendar arithmetic wherever the phone is. They were not: local-time
+// arithmetic made "tomorrow" today anywhere east of Greenwich, and lost a day
+// whenever a gap crossed a clock change. One run of this script only sees this
+// machine's timezone, so the app's own helpers are run in a child process
+// under each zone below and compared with arithmetic done in UTC alone.
+const DATE_ZONES = ['UTC', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Los_Angeles', 'Australia/Sydney', 'Pacific/Auckland', 'Asia/Kolkata'];
+function dateErrors(file) {
+  const text = readFileSync(new URL(file, import.meta.url), 'utf8');
+  const grab = id => (text.match(new RegExp(`^\\s*(?:export\\s+)?const\\s+${id}\\s*=.*$`, 'm')) || [''])[0].replace(/^\s*export\s+/, '');
+  const src = [grab('addDays'), grab('dayDiff')].filter(Boolean).join('\n');
+  if (!src.includes('addDays')) return [`addDays not found in ${file}`];
+  const probe = `const f = new Function(process.argv[1] + '; return { addDays, dayDiff: typeof dayDiff === "undefined" ? null : dayDiff };')();
+const ref = (s, n) => { const [y, m, d] = s.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
+let out = '';
+for (let i = 0; i < 730 && !out; i++) { const s = ref('2026-01-01', i);
+  for (const n of [-1, 1, 6, 15, 38, 95, 238]) { const w = ref(s, n);
+    if (f.addDays(s, n) !== w) { out = 'addDays(' + s + ', ' + n + ') = ' + f.addDays(s, n) + ', expected ' + w; break; }
+    if (f.dayDiff && f.dayDiff(s, w) !== n) { out = 'dayDiff(' + s + ', ' + w + ') = ' + f.dayDiff(s, w) + ', expected ' + n; break; } } }
+process.stdout.write(out);`;
+  return DATE_ZONES
+    .map(tz => [tz, execFileSync(process.execPath, ['-e', probe, src], { env: { ...process.env, TZ: tz } }).toString()])
+    .filter(([, e]) => e).map(([tz, e]) => `${tz}: ${e}`);
+}
+
+console.log('\ndates — every timezone');
+check('due dates are calendar arithmetic in every timezone', () => {
+  const e = dateErrors('../src/srs.js');
+  if (e.length) fail(e.join('\n      '));
 });
 
 console.log(failures === 0
