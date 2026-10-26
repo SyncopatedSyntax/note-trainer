@@ -528,21 +528,32 @@ check('every persisted value survives a ProgressBackup round trip', () => {
 });
 
 // ── Dates, in every timezone ─────────────────────────────────────────────
-// Due dates are UTC calendar days (todayStr), so addDays/dayDiff have to be
-// plain calendar arithmetic wherever the phone is. They were not: local-time
-// arithmetic made "tomorrow" today anywhere east of Greenwich, and lost a day
-// whenever a gap crossed a clock change. One run of this script only sees this
-// machine's timezone, so the app's own helpers are run in a child process
-// under each zone below and compared with arithmetic done in UTC alone.
+// "Today" is the phone's own calendar day, and the arithmetic on day strings
+// is plain calendar arithmetic, the same wherever the phone is. Both were
+// wrong: todayStr() was the UTC date, so the day rolled over at 5pm in
+// California and 8am in Singapore (last night's practice read as "today"), and
+// local-time arithmetic made "tomorrow" today east of Greenwich and lost a day
+// across clock changes. One run of this script only sees this machine's
+// timezone, so the app's own helpers run in a child process under each zone
+// below: todayStr() against the zone's own date (via Intl, at 32 instants
+// across a European clock change), addDays/dayDiff against UTC arithmetic.
 const DATE_ZONES = ['UTC', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Los_Angeles', 'Australia/Sydney', 'Pacific/Auckland', 'Asia/Kolkata'];
 function dateErrors(file) {
   const text = readFileSync(new URL(file, import.meta.url), 'utf8');
   const grab = id => (text.match(new RegExp(`^\\s*(?:export\\s+)?const\\s+${id}\\s*=.*$`, 'm')) || [''])[0].replace(/^\s*export\s+/, '');
-  const src = [grab('addDays'), grab('dayDiff')].filter(Boolean).join('\n');
-  if (!src.includes('addDays')) return [`addDays not found in ${file}`];
-  const probe = `const f = new Function(process.argv[1] + '; return { addDays, dayDiff: typeof dayDiff === "undefined" ? null : dayDiff };')();
+  const src = [grab('todayStr'), grab('addDays'), grab('dayDiff')].filter(Boolean).join('\n');
+  if (!src.includes('addDays') || !src.includes('todayStr')) return [`todayStr or addDays not found in ${file}`];
+  const probe = `const f = new Function(process.argv[1] + '; return { todayStr, addDays, dayDiff: typeof dayDiff === "undefined" ? null : dayDiff };')();
+const RealDate = Date, local = new Intl.DateTimeFormat('en-CA', { timeZone: process.env.TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
 const ref = (s, n) => { const [y, m, d] = s.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
 let out = '';
+for (let h = 0; h < 48 && !out; h += 1.5) {
+  const t = Date.UTC(2026, 2, 28) + h * 3600000;
+  globalThis.Date = class extends RealDate { constructor(...a) { if (a.length) super(...a); else super(t); } static now() { return t; } };
+  const got = f.todayStr(); globalThis.Date = RealDate;
+  const want = local.format(new RealDate(t));
+  if (got !== want) out = 'todayStr() at ' + new RealDate(t).toISOString() + ' = ' + got + ', expected the local day ' + want;
+}
 for (let i = 0; i < 730 && !out; i++) { const s = ref('2026-01-01', i);
   for (const n of [-1, 1, 6, 15, 38, 95, 238]) { const w = ref(s, n);
     if (f.addDays(s, n) !== w) { out = 'addDays(' + s + ', ' + n + ') = ' + f.addDays(s, n) + ', expected ' + w; break; }
@@ -554,7 +565,7 @@ process.stdout.write(out);`;
 }
 
 console.log('\ndates — every timezone');
-check('due dates are calendar arithmetic in every timezone', () => {
+check('today is the local day, and day arithmetic is the same in every timezone', () => {
   const e = dateErrors('../src/srs.js');
   if (e.length) fail(e.join('\n      '));
 });
