@@ -8,7 +8,7 @@
 // mapped element — and NOT STRINGS[5-r], or the letters invert relative to the
 // dots. MelodicMinorTrainer has that bug; this does not.
 
-import { STRINGS, midiAt, pcAt, nameOf } from './theory.js';
+import { STRINGS } from './theory.js';
 
 const MARK_COLOR = { ok: '#2ed573', octave: '#fbbf24', wrong: '#ef4444', reveal: '#fb923c', ghost: '#6b6880' };
 

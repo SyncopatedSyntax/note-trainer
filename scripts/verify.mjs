@@ -13,10 +13,8 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import {
   MAX_FRET, STRINGS, SHARP_NAMES, FLAT_NAMES, NATURAL_PCS, WINDOWS,
-  pcAt, midiAt, nameOf, parseNote, allCards, cardId,
-  positionsOf, positionsOfPitch, extremal, nearestFrom, windowAround, firstFretOf,
-} from '../src/theory.js';
-import { buildPrompt, judge, VERDICT, sequenceIsUnambiguous, PITCH_UNIQUE, revealFor } from '../src/drills.js';
+  pcAt, midiAt, nameOf, parseNote, allCards, positionsOf, positionsOfPitch, extremal, nearestFrom, windowAround, } from '../src/theory.js';
+import { buildPrompt, judge, VERDICT, sequenceIsUnambiguous, revealFor } from '../src/drills.js';
 import { STAGES, poolThrough } from '../src/ladder.js';
 import { detectPitch } from '../src/pitch.js';
 

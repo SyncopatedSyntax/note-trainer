@@ -18,10 +18,7 @@
 // and verify.mjs asserts we cannot reproduce it.
 
 import {
-  MAX_FRET, STRINGS, WINDOWS, NATURAL_PCS, isNatural,
-  pcOf, midiAt, pcAt, nameOf, octaveOf,
-  positionsOf, positionsOfPitch, extremal, nearestFrom, cardId,
-} from './theory.js';
+  MAX_FRET, STRINGS, WINDOWS, pcOf, midiAt, pcAt, nameOf, positionsOf, positionsOfPitch, extremal, nearestFrom, } from './theory.js';
 
 export const DRILLS = ['find', 'name', 'findAll', 'fretSlice', 'extremal', 'nearest', 'barreRoot', 'keyDegree'];
 

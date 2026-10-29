@@ -3,13 +3,13 @@ import { AppHeader, TabBar, ProgressBackup } from '@fretworks/design';
 import Fretboard from './Fretboard.jsx';
 import {
   STRINGS, WINDOWS, NATURAL_PCS, MAX_FRET,
-  nameOf, pcAt, midiAt, positionsOfPitch, allCards, cardId, parseCardId,
+  nameOf, cardId, parseCardId,
   windowAround, firstFretOf, positionsOf,
 } from './theory.js';
 import { buildPrompt, judge, VERDICT, DRILL_META, revealFor } from './drills.js';
-import { STAGES, stageByN, poolThrough, ACC_PASS, ACC_WINDOW, SPEED_WINDOW, SPEED_PASS } from './ladder.js';
+import { STAGES, stageByN, poolThrough, ACC_PASS, SPEED_WINDOW, SPEED_PASS } from './ladder.js';
 import {
-  todayStr, dayDiff, updateSRS, isLearned, dueOn, accOf, ri, shuffle,
+  todayStr, updateSRS, dueOn, ri, shuffle,
   breakdown, srsStats, forecast, buildQueue, pushLatency, medianOf, WEAK_MIN_SEEN, WEAK_ACC,
 } from './srs.js';
 import { createListener } from './pitch.js';
