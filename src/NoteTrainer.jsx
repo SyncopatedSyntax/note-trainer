@@ -176,10 +176,6 @@ export default function App() {
     meta('theme-color', '#0f0e17');
     meta('apple-mobile-web-app-capable', 'yes');
     meta('apple-mobile-web-app-status-bar-style', 'black-translucent');
-    meta('apple-mobile-web-app-title', 'Fretworks');
-    let ml = document.querySelector('link[rel="manifest"]');
-    if (!ml) { ml = document.createElement('link'); ml.rel = 'manifest'; document.head.appendChild(ml); }
-    ml.href = '/manifest.webmanifest';
     // iOS standalone initialises scrollY to the safe-area inset, which offsets
     // every tap. Pin the page.
     window.scrollTo(0, 0);

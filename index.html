@@ -4,9 +4,33 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Fretworks — Note Trainer</title>
+      <!-- Add to Home Screen installs THIS trainer: its own name, icon and start
+         page (public/manifest.webmanifest). Paths are rewritten under the base. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icon-180.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Notes" />
+    <meta name="theme-color" content="#0f0e17" />
   </head>
   <body style="margin:0;background:#0f0e17;">
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
+      <script>
+      // The shell's one service worker (/sw.js, scope /), registered here as
+      // well: on iPhone a trainer added to the Home Screen has its own storage
+      // and never loads a shell page, so it would otherwise have no offline
+      // copy. Same script, same scope — one worker, not a second one.
+      (function () {
+        if (!("serviceWorker" in navigator)) return;
+        var h = location.hostname;
+        if (h === "localhost" || h === "127.0.0.1") return;
+        window.addEventListener("load", function () {
+          navigator.serviceWorker.register("/sw.js").catch(function () {});
+        });
+      })();
+    </script>
   </body>
 </html>

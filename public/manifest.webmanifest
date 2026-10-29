@@ -1,0 +1,29 @@
+{
+  "id": "/notes/",
+  "name": "Note Trainer",
+  "short_name": "Notes",
+  "description": "Know where every note is. Play them on the real neck — the app listens — one string at a time until you find any note without counting.",
+  "start_url": "/notes/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f0e17",
+  "theme_color": "#0f0e17",
+  "icons": [
+    {
+      "src": "/notes/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/notes/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/notes/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
