@@ -261,8 +261,9 @@ overwrite real progress before the load finishes.
 ## Fretworks integration
 
 Vite `base: '/notes/'`, served as a Vercel zone. Registry key `notes`, accent
-**orange `#fb923c`**, emoji 📍, path `/notes/`, placed **before Diatonic** in
-`TOOLS` and `LEARNING_PATH`.
+**orange `#fb923c`**, emoji 📍, path `/notes/`, first in the "Notes, keys &
+harmony" family in `TOOLS`, and the first step of the brochure's "Know the
+neck" goal (`START_PATHS`).
 
 `@fretworks/design` is a git dep **pinned to an exact commit** in the lockfile and
 Vercel builds from the lockfile — a design change is invisible until each consumer
